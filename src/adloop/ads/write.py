@@ -716,6 +716,10 @@ def _apply_create_campaign(client: object, cid: str, changes: dict) -> dict:
     campaign.network_settings.target_search_network = False
     campaign.network_settings.target_content_network = False
 
+    # Required for campaigns that may serve in EU countries (Google rejects
+    # the mutation without it). Non-political advertisers set this to false.
+    campaign.contains_eu_political_advertising = False
+
     operations.append(campaign_op)
 
     # 3. AdGroup (temp ID: -3, references campaign -2)
