@@ -60,10 +60,10 @@ class TestDoubleConfirmation:
 
     def test_large_budget_increase_requires_double(self):
         assert requires_double_confirmation(
-            "update_budget", current_budget=10.0, proposed_budget=20.0
+            "update_campaign", current_budget=10.0, proposed_budget=20.0
         ) is True
 
     def test_small_budget_increase_does_not(self):
         assert requires_double_confirmation(
-            "update_budget", current_budget=10.0, proposed_budget=14.0
+            "update_campaign", current_budget=10.0, proposed_budget=14.0
         ) is False

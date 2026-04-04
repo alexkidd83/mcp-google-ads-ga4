@@ -183,6 +183,10 @@ def _generate_config_yaml(
         f"  require_dry_run: {dry_run_str}",
         '  log_file: "~/.adloop/audit.log"',
         "  blocked_operations: []",
+        "  # Restrict writes to specific customer IDs (empty = all allowed)",
+        "  allowed_customer_ids: []",
+        "  # Minutes before a pending plan expires",
+        "  plan_ttl_minutes: 30",
         "",
     ]
     return "\n".join(lines)

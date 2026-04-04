@@ -1,6 +1,27 @@
 """Tests for config loading and validation."""
 
-from adloop.config import AdLoopConfig, load_config
+import pytest
+
+from adloop.config import AdLoopConfig, SafetyConfig, load_config
+
+
+class TestSafetyConfigValidation:
+    def test_ttl_zero_raises(self):
+        with pytest.raises(ValueError, match="plan_ttl_minutes must be > 0"):
+            SafetyConfig(plan_ttl_minutes=0)
+
+    def test_ttl_negative_raises(self):
+        with pytest.raises(ValueError, match="plan_ttl_minutes must be > 0"):
+            SafetyConfig(plan_ttl_minutes=-5)
+
+    def test_ttl_string_coerced_to_int(self):
+        config = SafetyConfig(plan_ttl_minutes="30")
+        assert config.plan_ttl_minutes == 30
+        assert isinstance(config.plan_ttl_minutes, int)
+
+    def test_ttl_valid_positive(self):
+        config = SafetyConfig(plan_ttl_minutes=15)
+        assert config.plan_ttl_minutes == 15
 
 
 class TestLoadConfig:

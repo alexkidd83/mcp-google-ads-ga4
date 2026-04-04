@@ -54,3 +54,14 @@ safety:
 
   # List of operations to block entirely (e.g. ["remove_entity"]).
   blocked_operations: []
+
+  # Restrict write operations to specific Google Ads customer IDs.
+  # When empty (default), all accounts are allowed.
+  # When set, only listed customer IDs can be modified.
+  # allowed_customer_ids:
+  #   - "123-456-7890"
+  #   - "098-765-4321"
+  allowed_customer_ids: []
+
+  # Minutes before a pending change plan expires and must be re-drafted.
+  plan_ttl_minutes: 30

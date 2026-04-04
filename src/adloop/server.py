@@ -104,6 +104,44 @@ def _safe(fn: Callable) -> Callable:
 
     return diagnostics.wrap_tool(wrapper)
 
+
+def _check_read_only() -> dict | None:
+    """Return an error dict if the server is in read-only mode, else None."""
+    import adloop
+
+    if adloop._read_only:
+        return {
+            "error": (
+                "Write operations disabled in read-only session. "
+                "Restart without --read-only to enable writes."
+            ),
+        }
+    return None
+
+
+def _check_customer_allowlist(customer_id: str) -> dict | None:
+    """Return an error dict if customer_id is not allowed, else None."""
+    from adloop.safety.guards import SafetyViolation, check_customer_id_allowed
+
+    try:
+        check_customer_id_allowed(customer_id, _config.safety)
+    except SafetyViolation as e:
+        return {"error": str(e)}
+    return None
+
+
+def _write_guards(customer_id: str = "") -> dict | None:
+    """Run all pre-write safety guards. Return error dict or None."""
+    err = _check_read_only()
+    if err:
+        return err
+    if customer_id:
+        err = _check_customer_allowlist(customer_id)
+        if err:
+            return err
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Health Check
 # ---------------------------------------------------------------------------
@@ -282,6 +320,64 @@ def get_tracking_events(
         property_id=property_id or _config.ga4.property_id,
         date_range_start=date_range_start,
         date_range_end=date_range_end,
+    )
+
+
+@mcp.tool(annotations=_READONLY)
+@_safe
+def get_property_details(
+    property_id: str = "",
+) -> dict:
+    """Get detailed metadata for a GA4 property.
+
+    Returns display name, time zone, currency, industry category,
+    service level, create/update timestamps, and parent account.
+    If property_id is empty, uses the default from config.
+    """
+    from adloop.ga4.admin import get_property_details as _impl
+
+    return _impl(
+        _config,
+        property_id=property_id or _config.ga4.property_id,
+    )
+
+
+@mcp.tool(annotations=_READONLY)
+@_safe
+def get_custom_dimensions_and_metrics(
+    property_id: str = "",
+) -> dict:
+    """List custom dimensions and custom metrics defined for a GA4 property.
+
+    Returns all dimensions and metrics where custom_definition is true,
+    including API names, display names, descriptions, and categories.
+    If property_id is empty, uses the default from config.
+    """
+    from adloop.ga4.admin import get_custom_dimensions_and_metrics as _impl
+
+    return _impl(
+        _config,
+        property_id=property_id or _config.ga4.property_id,
+    )
+
+
+@mcp.tool(annotations=_READONLY)
+@_safe
+def list_property_annotations(
+    property_id: str = "",
+) -> dict:
+    """List reporting data annotations for a GA4 property.
+
+    Annotations are notes attached to specific dates or date ranges in GA4,
+    typically used to record events such as service releases, marketing campaign
+    launches or changes, and traffic spikes or drops due to external factors.
+    If property_id is empty, uses the default from config.
+    """
+    from adloop.ga4.admin import list_property_annotations as _impl
+
+    return _impl(
+        _config,
+        property_id=property_id or _config.ga4.property_id,
     )
 
 
@@ -783,11 +879,16 @@ def draft_campaign(
 
     Call confirm_and_apply with the returned plan_id to execute.
     """
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import draft_campaign as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         campaign_name=campaign_name,
         daily_budget=daily_budget,
         bidding_strategy=bidding_strategy,
@@ -826,11 +927,16 @@ def draft_ad_group(
 
     Call confirm_and_apply with the returned plan_id to execute.
     """
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import draft_ad_group as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         campaign_id=campaign_id,
         ad_group_name=ad_group_name,
         keywords=keywords,
@@ -876,11 +982,16 @@ def update_campaign(
 
     Call confirm_and_apply with the returned plan_id to execute.
     """
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import update_campaign as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         campaign_id=campaign_id,
         bidding_strategy=bidding_strategy,
         target_cpa=target_cpa,
@@ -911,11 +1022,16 @@ def draft_responsive_search_ad(
     Provide 3-15 headlines (max 30 chars each) and 2-4 descriptions (max 90 chars each).
     The preview shows exactly what will be created. Call confirm_and_apply to execute.
     """
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import draft_responsive_search_ad as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         ad_group_id=ad_group_id,
         headlines=headlines,
         descriptions=descriptions,
@@ -937,11 +1053,16 @@ def draft_keywords(
     keywords: list of {"text": "keyword phrase", "match_type": "EXACT|PHRASE|BROAD"}
     Call confirm_and_apply with the returned plan_id to execute.
     """
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import draft_keywords as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         ad_group_id=ad_group_id,
         keywords=keywords,
     )
@@ -961,11 +1082,16 @@ def add_negative_keywords(
     match_type: "EXACT", "PHRASE", or "BROAD"
     Call confirm_and_apply with the returned plan_id to execute.
     """
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import add_negative_keywords as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         campaign_id=campaign_id,
         keywords=keywords,
         match_type=match_type,
@@ -1042,11 +1168,16 @@ def update_ad_group(
     max_cpc: float = 0,
 ) -> dict:
     """Draft an ad group update for name and/or manual CPC bid."""
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import update_ad_group as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         ad_group_id=ad_group_id,
         ad_group_name=ad_group_name,
         max_cpc=max_cpc,
@@ -1061,11 +1192,16 @@ def draft_callouts(
     customer_id: str = "",
 ) -> dict:
     """Draft campaign callout assets — returns a PREVIEW."""
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import draft_callouts as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         campaign_id=campaign_id,
         callouts=callouts,
     )
@@ -1079,11 +1215,16 @@ def draft_structured_snippets(
     customer_id: str = "",
 ) -> dict:
     """Draft campaign structured snippet assets — returns a PREVIEW."""
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import draft_structured_snippets as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         campaign_id=campaign_id,
         snippets=snippets,
     )
@@ -1097,11 +1238,16 @@ def draft_image_assets(
     customer_id: str = "",
 ) -> dict:
     """Draft campaign image assets from local PNG, JPEG, or GIF files."""
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import draft_image_assets as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         campaign_id=campaign_id,
         image_paths=image_paths,
     )
@@ -1125,11 +1271,16 @@ def pause_entity(
 
     Call confirm_and_apply with the returned plan_id to execute.
     """
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import pause_entity as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         entity_type=entity_type,
         entity_id=entity_id,
     )
@@ -1153,11 +1304,16 @@ def enable_entity(
 
     Call confirm_and_apply with the returned plan_id to execute.
     """
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import enable_entity as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         entity_type=entity_type,
         entity_id=entity_id,
     )
@@ -1189,11 +1345,16 @@ def remove_entity(
 
     Call confirm_and_apply with the returned plan_id to execute.
     """
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import remove_entity as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         entity_type=entity_type,
         entity_id=entity_id,
     )
@@ -1222,11 +1383,16 @@ def draft_sitelinks(
 
     Call confirm_and_apply with the returned plan_id to execute.
     """
+    resolved_cid = customer_id or _config.ads.customer_id
+    err = _write_guards(resolved_cid)
+    if err:
+        return err
+
     from adloop.ads.write import draft_sitelinks as _impl
 
     return _impl(
         _config,
-        customer_id=customer_id or _config.ads.customer_id,
+        customer_id=resolved_cid,
         campaign_id=campaign_id,
         sitelinks=sitelinks,
     )
@@ -1237,6 +1403,7 @@ def draft_sitelinks(
 def confirm_and_apply(
     plan_id: str,
     dry_run: bool = True,
+    confirmed: bool = False,
 ) -> dict:
     """Execute a previously previewed change.
 
@@ -1253,10 +1420,17 @@ def confirm_and_apply(
     the AdLoop MCP server.
 
     The plan_id comes from a prior draft_* or pause/enable tool call.
+
+    confirmed: Required for destructive operations (delete/remove) and large
+        budget increases (>50%). Pass confirmed=true to acknowledge the risk.
     """
+    err = _check_read_only()
+    if err:
+        return err
+
     from adloop.ads.write import confirm_and_apply as _impl
 
-    return _impl(_config, plan_id=plan_id, dry_run=dry_run)
+    return _impl(_config, plan_id=plan_id, dry_run=dry_run, confirmed=confirmed)
 
 
 # ---------------------------------------------------------------------------
@@ -1397,6 +1571,135 @@ def discover_keywords(
         page_size=page_size,
         customer_id=customer_id or _config.ads.customer_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Rollback & Audit Tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_READONLY)
+@_safe
+def list_recent_mutations(
+    limit: int = 20,
+) -> dict:
+    """List recent non-dry-run mutations from the audit log.
+
+    Returns the most recent write operations with their entry IDs,
+    timestamps, operations, and whether they are reversible.
+    Use this to find mutations that can be rolled back.
+    """
+    from adloop.safety.audit import read_recent_mutations
+
+    entries = read_recent_mutations(_config.safety.log_file, limit=limit)
+    reversible_ops = {
+        "update_campaign", "update_ad_group", "pause_entity", "enable_entity",
+    }
+    for entry in entries:
+        entry["reversible"] = (
+            entry.get("operation", "") in reversible_ops
+            and bool(entry.get("previous_state"))
+        )
+    return {
+        "mutations": entries,
+        "total": len(entries),
+    }
+
+
+@mcp.tool(annotations=_WRITE)
+@_safe
+def rollback_mutation(
+    audit_entry_id: str,
+) -> dict:
+    """Generate a rollback plan for a previously applied mutation.
+
+    Reads the audit log, finds the entry, and creates a ChangePlan that
+    reverses the mutation. The rollback plan goes through the normal
+    draft -> confirm_and_apply flow (no special bypass).
+
+    Returns a preview of the rollback plan, or an error if the mutation
+    is irreversible or not found.
+
+    Irreversible operations: remove_entity, all create_* operations.
+    Reversible operations: update_campaign, update_ad_group,
+    pause_entity, enable_entity (only when previous_state was captured).
+    """
+    err = _check_read_only()
+    if err:
+        return err
+
+    from adloop.safety.audit import get_mutation_by_id
+    from adloop.safety.preview import ChangePlan, store_plan
+    from adloop.safety.rollback import generate_rollback_plan
+
+    entry = get_mutation_by_id(_config.safety.log_file, audit_entry_id)
+    if entry is None:
+        return {
+            "error": f"No audit log entry found with id '{audit_entry_id}'.",
+            "hint": "Use list_recent_mutations to see available entries.",
+        }
+
+    if entry.get("dry_run", False):
+        return {
+            "error": "Cannot roll back a dry-run entry — no changes were made.",
+        }
+
+    rollback = generate_rollback_plan(entry)
+    if rollback is None:
+        op = entry.get("operation", "unknown")
+        if op in ("remove_entity",):
+            reason = "Remove operations are irreversible."
+        elif op.startswith("create_") or op.startswith("add_"):
+            reason = (
+                "Create/add operations cannot be auto-reversed. "
+                "Use pause_entity + remove_entity manually."
+            )
+        else:
+            reason = (
+                "No previous_state was captured for this entry. "
+                "Rollback requires previous state data."
+            )
+        return {
+            "error": f"Cannot generate rollback for '{op}'.",
+            "reason": reason,
+            "entry_id": audit_entry_id,
+        }
+
+    # Check customer allowlist for the rollback target
+    if rollback.get("customer_id"):
+        cid_err = _check_customer_allowlist(rollback["customer_id"])
+        if cid_err:
+            return cid_err
+
+    # Enforce safety policies (mirrors draft tools in write.py)
+    from adloop.safety.guards import SafetyViolation, check_blocked_operation, check_budget_cap
+
+    try:
+        check_blocked_operation(rollback["operation"], _config.safety)
+    except SafetyViolation as e:
+        return {"error": str(e)}
+
+    rollback_budget = rollback.get("changes", {}).get("daily_budget")
+    if rollback_budget is not None:
+        try:
+            check_budget_cap(rollback_budget, _config.safety)
+        except SafetyViolation as e:
+            return {"error": str(e)}
+
+    # Create a ChangePlan from the rollback dict and store it
+    plan = ChangePlan(
+        operation=rollback["operation"],
+        entity_type=rollback.get("entity_type", ""),
+        entity_id=rollback.get("entity_id", ""),
+        customer_id=rollback.get("customer_id", ""),
+        changes=rollback.get("changes", {}),
+    )
+    store_plan(plan)
+
+    preview = plan.to_preview()
+    preview["rollback_of"] = audit_entry_id
+    preview["reason"] = rollback.get("reason", "")
+    return preview
 
 
 # ---------------------------------------------------------------------------

@@ -37,6 +37,21 @@ def check_blocked_operation(operation: str, config: SafetyConfig) -> None:
         raise SafetyViolation(f"Operation '{operation}' is blocked by configuration")
 
 
+def check_customer_id_allowed(customer_id: str, config: SafetyConfig) -> None:
+    """Reject if customer_id is not in the configured allowlist.
+
+    When ``allowed_customer_ids`` is empty, all accounts are permitted
+    (backwards compatible). When non-empty, only listed IDs are accepted.
+    """
+    if not config.allowed_customer_ids:
+        return
+    if customer_id not in config.allowed_customer_ids:
+        raise SafetyViolation(
+            f"Customer ID {customer_id} is not in the allowed list. "
+            "Add it to config.yaml under safety.allowed_customer_ids"
+        )
+
+
 def requires_double_confirmation(operation: str, **kwargs: object) -> bool:
     """Return True if this operation is destructive enough to need double confirmation.
 

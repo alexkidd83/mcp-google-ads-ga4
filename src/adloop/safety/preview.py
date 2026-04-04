@@ -45,6 +45,7 @@ _pending_plans: dict[str, ChangePlan] = {}
 
 def store_plan(plan: ChangePlan) -> None:
     """Store a plan for later retrieval by confirm_and_apply."""
+    _purge_expired_plans()
     _pending_plans[plan.plan_id] = plan
 
 
@@ -56,3 +57,36 @@ def get_plan(plan_id: str) -> ChangePlan | None:
 def remove_plan(plan_id: str) -> None:
     """Remove a plan after execution."""
     _pending_plans.pop(plan_id, None)
+
+
+def plan_age_minutes(plan: ChangePlan) -> float:
+    """Return the age of a plan in minutes."""
+    created = datetime.fromisoformat(plan.created_at)
+    now = datetime.now(timezone.utc)
+    return (now - created).total_seconds() / 60
+
+
+def check_plan_ttl(plan: ChangePlan, ttl_minutes: int) -> str | None:
+    """Return an error message if the plan has expired, else None."""
+    age = plan_age_minutes(plan)
+    if age > ttl_minutes:
+        return (
+            f"Plan {plan.plan_id} expired ({age:.0f} minutes old, "
+            f"TTL is {ttl_minutes} minutes). Re-draft to create a fresh plan."
+        )
+    return None
+
+
+def _purge_expired_plans(ttl_minutes: int = 60) -> None:
+    """Remove plans older than ``ttl_minutes`` from the pending store.
+
+    Uses a generous default (60 min) so cleanup catches clearly stale
+    plans without racing the configured TTL checked at confirm time.
+    """
+    expired = [
+        pid
+        for pid, plan in _pending_plans.items()
+        if plan_age_minutes(plan) > ttl_minutes
+    ]
+    for pid in expired:
+        _pending_plans.pop(pid, None)

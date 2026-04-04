@@ -888,6 +888,10 @@ def update_campaign(
         changes["target_roas"] = target_roas
     if daily_budget:
         changes["daily_budget"] = daily_budget
+        # Fetch current budget for double-confirmation guard in confirm_and_apply.
+        # Fail closed: 0.0 baseline means any positive budget triggers double-confirm.
+        current = _get_current_daily_budget(config, customer_id, campaign_id)
+        changes["current_budget"] = current if current is not None else 0.0
     if geo_target_ids is not None:
         changes["geo_target_ids"] = geo_target_ids
     if language_ids is not None:
@@ -1167,20 +1171,46 @@ def confirm_and_apply(
     *,
     plan_id: str = "",
     dry_run: bool = True,
+    confirmed: bool = False,
 ) -> dict:
     """Execute a previously previewed change.
 
     Defaults to dry_run=True. The caller must explicitly pass dry_run=False
     to make real changes.
+
+    ``confirmed`` must be True for destructive operations (delete/remove)
+    and budget increases >50%.
     """
     from adloop.safety.audit import log_mutation
-    from adloop.safety.preview import get_plan, remove_plan
+    from adloop.safety.guards import requires_double_confirmation
+    from adloop.safety.preview import check_plan_ttl, get_plan, remove_plan
 
     plan = get_plan(plan_id)
     if plan is None:
         return {
             "error": f"No pending plan found with id '{plan_id}'. "
             "Plans expire when the MCP server restarts.",
+        }
+
+    # --- Plan TTL check ---
+    ttl_error = check_plan_ttl(plan, config.safety.plan_ttl_minutes)
+    if ttl_error:
+        remove_plan(plan.plan_id)
+        return {"error": ttl_error}
+
+    # --- Double confirmation check ---
+    if requires_double_confirmation(
+        plan.operation,
+        current_budget=plan.changes.get("current_budget"),
+        proposed_budget=plan.changes.get("daily_budget"),
+    ) and not confirmed:
+        return {
+            "error": (
+                f"Operation '{plan.operation}' requires explicit confirmation. "
+                "Call confirm_and_apply again with confirmed=true to proceed."
+            ),
+            "plan_id": plan.plan_id,
+            "requires_double_confirm": True,
         }
 
     forced_by_config = bool(config.safety.require_dry_run) and not dry_run
@@ -1233,6 +1263,9 @@ def confirm_and_apply(
             )
         return response
 
+    # --- Capture previous state for rollback ---
+    previous_state = _capture_previous_state(config, plan)
+
     try:
         result = _execute_plan(config, plan)
     except Exception as e:
@@ -1247,10 +1280,11 @@ def confirm_and_apply(
             dry_run=False,
             result="error",
             error=error_message,
+            previous_state=previous_state,
         )
         return {"error": error_message, "plan_id": plan.plan_id}
 
-    log_mutation(
+    entry_id = log_mutation(
         config.safety.log_file,
         operation=plan.operation,
         customer_id=plan.customer_id,
@@ -1259,6 +1293,7 @@ def confirm_and_apply(
         changes=plan.changes,
         dry_run=False,
         result="success",
+        previous_state=previous_state,
     )
     remove_plan(plan.plan_id)
 
@@ -1267,6 +1302,215 @@ def confirm_and_apply(
         "plan_id": plan.plan_id,
         "operation": plan.operation,
         "result": result,
+        "entry_id": entry_id,
+        "reversible": plan.operation in _REVERSIBLE_OPERATIONS,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Operations that support rollback
+# ---------------------------------------------------------------------------
+
+_REVERSIBLE_OPERATIONS = frozenset({
+    "update_campaign",
+    "update_ad_group",
+    "pause_entity",
+    "enable_entity",
+})
+
+
+# ---------------------------------------------------------------------------
+# Previous state capture — query current values before mutation
+# ---------------------------------------------------------------------------
+
+
+def _capture_previous_state(config: AdLoopConfig, plan: object) -> dict | None:
+    """Query the current state of the entity being modified.
+
+    Returns a dict of current values for reversible operations, or None
+    for operations where rollback is not realistic (create, remove).
+    """
+    operation = plan.operation
+    if operation not in _REVERSIBLE_OPERATIONS:
+        return None
+
+    try:
+        if operation in ("pause_entity", "enable_entity"):
+            return _capture_entity_status(config, plan)
+        if operation == "update_campaign":
+            return _capture_campaign_state(config, plan)
+        if operation == "update_ad_group":
+            return _capture_ad_group_state(config, plan)
+    except Exception:
+        # Capture failure must not block the mutation itself
+        return None
+
+    return None
+
+
+def _capture_entity_status(config: AdLoopConfig, plan: object) -> dict | None:
+    """Capture the current status of a campaign/ad_group/ad/keyword."""
+    from adloop.ads.gaql import execute_query
+
+    entity_type = plan.entity_type
+    entity_id = plan.entity_id
+    customer_id = plan.customer_id
+
+    if entity_type == "campaign":
+        query = f"""
+            SELECT campaign.status
+            FROM campaign
+            WHERE campaign.id = {entity_id}
+            LIMIT 1
+        """
+        rows = execute_query(config, customer_id, query)
+        if rows:
+            return {"status": rows[0].get("campaign.status")}
+
+    elif entity_type == "ad_group":
+        query = f"""
+            SELECT ad_group.status
+            FROM ad_group
+            WHERE ad_group.id = {entity_id}
+            LIMIT 1
+        """
+        rows = execute_query(config, customer_id, query)
+        if rows:
+            return {"status": rows[0].get("ad_group.status")}
+
+    elif entity_type == "ad":
+        resolved_id = entity_id.replace("~", "/")
+        query = f"""
+            SELECT ad_group_ad.status
+            FROM ad_group_ad
+            WHERE ad_group_ad.ad.id = {resolved_id.split('/')[-1]}
+            LIMIT 1
+        """
+        rows = execute_query(config, customer_id, query)
+        if rows:
+            return {"status": rows[0].get("ad_group_ad.status")}
+
+    elif entity_type == "keyword":
+        query = f"""
+            SELECT ad_group_criterion.status
+            FROM ad_group_criterion
+            WHERE ad_group_criterion.criterion_id = {entity_id.split('~')[-1]}
+            LIMIT 1
+        """
+        rows = execute_query(config, customer_id, query)
+        if rows:
+            return {"status": rows[0].get("ad_group_criterion.status")}
+
+    return None
+
+
+def _capture_campaign_state(config: AdLoopConfig, plan: object) -> dict | None:
+    """Capture current campaign settings that might be changed."""
+    from adloop.ads.gaql import execute_query
+
+    campaign_id = plan.changes.get("campaign_id", plan.entity_id)
+    customer_id = plan.customer_id
+
+    query = f"""
+        SELECT
+            campaign.status,
+            campaign.bidding_strategy_type,
+            campaign_budget.amount_micros,
+            campaign.network_settings.target_search_network,
+            campaign.network_settings.target_content_network,
+            campaign.target_spend.cpc_bid_ceiling_micros,
+            campaign.target_cpa.target_cpa_micros,
+            campaign.target_roas.target_roas
+        FROM campaign
+        WHERE campaign.id = {campaign_id}
+        LIMIT 1
+    """
+    rows = execute_query(config, customer_id, query)
+    if not rows:
+        return None
+
+    row = rows[0]
+    budget_micros = row.get("campaign_budget.amount_micros", 0)
+
+    state: dict = {
+        "status": row.get("campaign.status"),
+        "bidding_strategy": row.get("campaign.bidding_strategy_type"),
+        "daily_budget": budget_micros / 1_000_000 if budget_micros else 0,
+        "search_partners_enabled": row.get(
+            "campaign.network_settings.target_search_network"
+        ),
+        "display_network_enabled": row.get(
+            "campaign.network_settings.target_content_network"
+        ),
+    }
+
+    ceiling = row.get("campaign.target_spend.cpc_bid_ceiling_micros", 0)
+    if ceiling:
+        state["max_cpc"] = ceiling / 1_000_000
+
+    target_cpa_micros = row.get("campaign.target_cpa.target_cpa_micros", 0)
+    if target_cpa_micros:
+        state["target_cpa"] = target_cpa_micros / 1_000_000
+
+    target_roas = row.get("campaign.target_roas.target_roas", 0)
+    if target_roas:
+        state["target_roas"] = target_roas
+
+    # Capture geo targets if the plan changes them
+    if "geo_target_ids" in plan.changes:
+        geo_query = f"""
+            SELECT campaign_criterion.location.geo_target_constant
+            FROM campaign_criterion
+            WHERE campaign.id = {campaign_id}
+              AND campaign_criterion.type = 'LOCATION'
+        """
+        geo_rows = execute_query(config, customer_id, geo_query)
+        state["geo_target_ids"] = [
+            r.get("campaign_criterion.location.geo_target_constant", "")
+            .replace("geoTargetConstants/", "")
+            for r in geo_rows
+        ]
+
+    # Capture language targets if the plan changes them
+    if "language_ids" in plan.changes:
+        lang_query = f"""
+            SELECT campaign_criterion.language.language_constant
+            FROM campaign_criterion
+            WHERE campaign.id = {campaign_id}
+              AND campaign_criterion.type = 'LANGUAGE'
+        """
+        lang_rows = execute_query(config, customer_id, lang_query)
+        state["language_ids"] = [
+            r.get("campaign_criterion.language.language_constant", "")
+            .replace("languageConstants/", "")
+            for r in lang_rows
+        ]
+
+    return state
+
+
+def _capture_ad_group_state(config: AdLoopConfig, plan: object) -> dict | None:
+    """Capture current ad group name and CPC bid."""
+    from adloop.ads.gaql import execute_query
+
+    ad_group_id = plan.changes.get("ad_group_id", plan.entity_id)
+    customer_id = plan.customer_id
+
+    query = f"""
+        SELECT ad_group.name, ad_group.cpc_bid_micros
+        FROM ad_group
+        WHERE ad_group.id = {ad_group_id}
+        LIMIT 1
+    """
+    rows = execute_query(config, customer_id, query)
+    if not rows:
+        return None
+
+    row = rows[0]
+    cpc_micros = row.get("ad_group.cpc_bid_micros", 0)
+    return {
+        "ad_group_name": row.get("ad_group.name"),
+        "max_cpc": cpc_micros / 1_000_000 if cpc_micros else 0,
     }
 
 
@@ -1297,6 +1541,28 @@ def _campaign_uses_manual_cpc(
     if bidding_strategy is None:
         return None
     return bidding_strategy == "MANUAL_CPC"
+
+
+def _get_current_daily_budget(
+    config: AdLoopConfig, customer_id: str, campaign_id: str
+) -> float | None:
+    """Return the current daily budget for the campaign, or None if unavailable."""
+    from adloop.ads.gaql import execute_query
+
+    try:
+        query = f"""
+            SELECT campaign_budget.amount_micros
+            FROM campaign
+            WHERE campaign.id = {campaign_id}
+            LIMIT 1
+        """
+        rows = execute_query(config, customer_id, query)
+        if not rows:
+            return None
+        micros = rows[0].get("campaign_budget.amount_micros", 0)
+        return micros / 1_000_000 if micros else 0.0
+    except Exception:
+        return None
 
 
 def _campaign_bidding_strategy(

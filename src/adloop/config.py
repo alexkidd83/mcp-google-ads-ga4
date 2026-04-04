@@ -39,6 +39,15 @@ class SafetyConfig:
     require_dry_run: bool = True
     log_file: str = "~/.adloop/audit.log"
     blocked_operations: list[str] = field(default_factory=list)
+    allowed_customer_ids: list[str] = field(default_factory=list)
+    plan_ttl_minutes: int = 30
+
+    def __post_init__(self) -> None:
+        self.plan_ttl_minutes = int(self.plan_ttl_minutes)
+        if self.plan_ttl_minutes <= 0:
+            raise ValueError(
+                f"plan_ttl_minutes must be > 0, got {self.plan_ttl_minutes}"
+            )
 
 
 @dataclass
@@ -103,6 +112,8 @@ def load_config(config_path: str | None = None) -> AdLoopConfig:
             require_dry_run=safety_raw.get("require_dry_run", True),
             log_file=safety_raw.get("log_file", "~/.adloop/audit.log"),
             blocked_operations=safety_raw.get("blocked_operations", []),
+            allowed_customer_ids=safety_raw.get("allowed_customer_ids", []),
+            plan_ttl_minutes=safety_raw.get("plan_ttl_minutes", 30),
         ),
         source_path=resolved,
     )

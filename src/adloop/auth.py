@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib.resources
+import json
+import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,16 +14,11 @@ if TYPE_CHECKING:
 
     from adloop.config import AdLoopConfig
 
-# Request all scopes in a single OAuth flow so one token works for both
-# GA4 and Google Ads. Without this, separate tokens would constantly
-# overwrite each other at the same token_path.
-_ALL_SCOPES = [
+_GA4_SCOPES_READONLY = [
     "https://www.googleapis.com/auth/analytics.readonly",
-    "https://www.googleapis.com/auth/analytics.edit",
-    "https://www.googleapis.com/auth/adwords",
 ]
 
-_GA4_SCOPES = [
+_GA4_SCOPES_EDIT = [
     "https://www.googleapis.com/auth/analytics.readonly",
     "https://www.googleapis.com/auth/analytics.edit",
 ]
@@ -58,9 +56,60 @@ def _get_credentials_path(config: AdLoopConfig) -> Path | None:
     return None
 
 
+def _ga4_scope_mode() -> str:
+    """Return GA4 scope mode from environment."""
+    mode = os.environ.get("ADLOOP_GA4_SCOPE_MODE", "readonly").strip().lower()
+    if mode not in {"readonly", "edit"}:
+        raise ValueError(
+            "Invalid ADLOOP_GA4_SCOPE_MODE. Use 'readonly' (default) or 'edit'."
+        )
+    return mode
+
+
+def _ga4_scopes() -> list[str]:
+    """Return GA4 scopes based on configured mode."""
+    return _GA4_SCOPES_EDIT if _ga4_scope_mode() == "edit" else _GA4_SCOPES_READONLY
+
+
+def _oauth_scopes() -> list[str]:
+    """Return merged OAuth scopes for unified Ads + GA4 token."""
+    return [*_ADS_SCOPES, *_ga4_scopes()]
+
+
+def _read_scopes_from_token_file(token_path: Path) -> set[str]:
+    """Read granted scopes from a stored OAuth token file."""
+    try:
+        raw = json.loads(token_path.read_text())
+    except Exception:
+        return set()
+
+    scopes = raw.get("scopes", [])
+    if isinstance(scopes, str):
+        return set(scopes.split())
+    if isinstance(scopes, list):
+        return {str(s) for s in scopes}
+    return set()
+
+
+def _token_has_required_scopes(token_path: Path, required_scopes: list[str]) -> bool:
+    """Check whether token file includes all required scopes."""
+    granted = _read_scopes_from_token_file(token_path)
+    if not granted:
+        return False
+    return set(required_scopes).issubset(granted)
+
+
+def _archive_incompatible_token(token_path: Path) -> Path:
+    """Archive incompatible token file and return backup path."""
+    backup_path = token_path.with_name(f"{token_path.name}.bak.{int(time.time())}")
+    token_path.rename(backup_path)
+    return backup_path
+
+
 def get_ga4_credentials(config: AdLoopConfig) -> Credentials:
     """Return authenticated credentials for GA4 APIs."""
     creds_path = _get_credentials_path(config)
+    ga4_scopes = _ga4_scopes()
 
     if creds_path is not None:
         import json
@@ -73,14 +122,14 @@ def get_ga4_credentials(config: AdLoopConfig) -> Credentials:
 
             return service_account.Credentials.from_service_account_file(
                 str(creds_path),
-                scopes=_GA4_SCOPES,
+                scopes=ga4_scopes,
             )
 
         return _oauth_flow(config, creds_path)
 
     import google.auth
 
-    credentials, _ = google.auth.default(scopes=_GA4_SCOPES)
+    credentials, _ = google.auth.default(scopes=ga4_scopes)
     return credentials
 
 
@@ -113,7 +162,7 @@ def get_ads_credentials(config: AdLoopConfig) -> Credentials:
 def _oauth_flow(
     config: AdLoopConfig, creds_path: Path | None = None
 ) -> Credentials:
-    """Run OAuth Desktop flow requesting all scopes (GA4 + Ads).
+    """Run OAuth Desktop flow requesting unified Ads + GA4 scopes.
 
     Uses a single token file for all scopes to avoid conflicts between
     GA4 and Ads auth sharing the same token_path.
@@ -133,12 +182,17 @@ def _oauth_flow(
             "No OAuth credentials found. Run 'adloop init' or place "
             "credentials.json at ~/.adloop/credentials.json"
         )
+    requested_scopes = _oauth_scopes()
 
     creds = None
     if token_path.exists():
-        creds = OAuthCredentials.from_authorized_user_file(
-            str(token_path), _ALL_SCOPES
-        )
+        if not _token_has_required_scopes(token_path, requested_scopes):
+            # Explicit migration path when scope requirements change.
+            _archive_incompatible_token(token_path)
+        else:
+            creds = OAuthCredentials.from_authorized_user_file(
+                str(token_path), requested_scopes
+            )
 
     if creds and creds.valid:
         return creds
@@ -161,7 +215,7 @@ def _oauth_flow(
             raise
     else:
         flow = InstalledAppFlow.from_client_secrets_file(
-            str(creds_path), _ALL_SCOPES
+            str(creds_path), requested_scopes
         )
         creds = _run_oauth_with_fallback(flow)
 
