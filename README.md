@@ -185,28 +185,32 @@ uv sync
 uv run adloop init
 ```
 
-The `adloop init` wizard walks you through everything:
+The `adloop init` wizard walks you through everything. AdLoop ships with built-in Google OAuth credentials, so you don't need to create a Google Cloud project.
 
-1. **Google Cloud checklist** with clickable links to each setup page
-2. **Credentials** — prompts for your OAuth JSON path, validates the file exists
-3. **GA4 Property ID** — validates numeric format
-4. **Developer Token** — from your Google Ads MCC API Center
-5. **Customer IDs** — auto-formats `1234567890` → `123-456-7890`
-6. **Safety defaults** — budget cap and dry-run preference
-7. **OAuth authorization** — optionally opens your browser to complete auth immediately
-8. **Editor config snippets** — prints MCP configuration for both Cursor and Claude Code
+The wizard:
+
+1. **Developer token** — from your Google Ads MCC ([API Center](https://ads.google.com/aw/apicenter))
+2. **MCC Account ID** — your Manager Account ID (top bar in the MCC UI)
+3. **OAuth sign-in** — opens a browser to sign in with Google (or prints a URL for headless servers)
+4. **Auto-discovers your accounts** — finds your GA4 properties and Ads accounts automatically
+5. **Safety defaults** — budget cap and dry-run preference
+6. **Editor config snippets** — prints MCP configuration for both Cursor and Claude Code
 
 ### Requirements
 
 - Python 3.11+
-- [uv](https://docs.astral.sh/uv/) for package management
-- A Google Cloud project (free tier works)
 - A Google Ads account with an MCC (Manager Account)
 
-### Manual Setup (If Not Using the Wizard)
+### Headless Servers
+
+Running on a server without a browser (VMs, Docker, SSH)? The wizard automatically detects this and falls back to a manual flow: it prints an authorization URL you can open on any device, then you paste the redirect URL back into the terminal.
+
+### Advanced Setup (Custom Google Cloud Project)
 
 <details>
-<summary>Click to expand manual setup steps</summary>
+<summary>Click to expand — only needed if you want to use your own GCP project instead of AdLoop's built-in credentials</summary>
+
+When you run `adloop init`, choose "No" when asked about built-in credentials. The wizard will guide you through:
 
 #### Step 1 — Google Cloud Project
 
@@ -223,8 +227,6 @@ The `adloop init` wizard walks you through everything:
 3. Select **Desktop app** as the application type, give it any name
 4. Download the JSON file and save it as `~/.adloop/credentials.json`
 
-On first run, AdLoop opens a browser window where you sign in with your Google account and grant access. The resulting token is saved to `~/.adloop/token.json` and refreshed automatically.
-
 > Service accounts are also supported — just place the service account key JSON at the same `credentials_path`. AdLoop detects the file type automatically.
 
 #### Step 3 — Google Ads Developer Token
@@ -237,28 +239,7 @@ Access levels:
 - **Explorer** (automatic) — 2,880 operations/day on production accounts. Enough to get started.
 - **Basic** (requires application) — 15,000 operations/day. Apply through the same API Center page if you need more.
 
-#### Step 4 — Find Your IDs
-
-| ID | Where to Find It |
-|----|-------------------|
-| **GA4 Property ID** | GA4 → Admin → Property Settings (numeric, e.g. `123456789`) |
-| **Google Ads Customer ID** | Google Ads UI → top bar (e.g. `123-456-7890`) |
-| **MCC Account ID** | MCC UI → top bar (e.g. `123-456-7890`) |
-
-#### Step 5 — Install and Configure
-
-```bash
-git clone https://github.com/kLOsk/adloop.git
-cd adloop
-uv sync
-
-mkdir -p ~/.adloop
-cp config.yaml.example ~/.adloop/config.yaml
-```
-
-Edit `~/.adloop/config.yaml` and fill in the values from the previous steps. See [`config.yaml.example`](config.yaml.example) for a fully documented template.
-
-#### Step 6 — Connect to Your Editor
+#### Step 4 — Connect to Your Editor
 
 **Cursor** — Add to your project's `.cursor/mcp.json`:
 
@@ -317,12 +298,12 @@ All configuration lives in `~/.adloop/config.yaml`. See [`config.yaml.example`](
 
 | Section | Key | Default | Description |
 |---------|-----|---------|-------------|
-| `google` | `project_id` | — | Your Google Cloud project ID |
-| `google` | `credentials_path` | `~/.adloop/credentials.json` | Path to OAuth client JSON or service account key |
+| `google` | `project_id` | *(empty)* | Google Cloud project ID (only needed with custom credentials) |
+| `google` | `credentials_path` | *(empty — uses built-in)* | Path to OAuth client JSON or service account key. Leave empty to use AdLoop's built-in credentials. |
 | `google` | `token_path` | `~/.adloop/token.json` | Where to store the OAuth token (auto-created) |
-| `ga4` | `property_id` | — | Your GA4 property ID (found in GA4 Admin → Property Settings) |
+| `ga4` | `property_id` | — | Your GA4 property ID (auto-discovered by `adloop init`) |
 | `ads` | `developer_token` | — | Your Google Ads API developer token |
-| `ads` | `customer_id` | — | Default Google Ads customer ID |
+| `ads` | `customer_id` | — | Default Google Ads customer ID (auto-discovered by `adloop init`) |
 | `ads` | `login_customer_id` | — | Your MCC account ID |
 | `safety` | `max_daily_budget` | `50.00` | Maximum allowed daily budget per campaign |
 | `safety` | `require_dry_run` | `true` | Force all writes to dry-run mode |
@@ -335,7 +316,7 @@ src/adloop/
 ├── __init__.py        # Entry point — routes 'adloop init' to wizard, otherwise starts MCP server
 ├── server.py          # FastMCP server — 38 tool registrations with safety annotations
 ├── config.py          # Config loader (~/.adloop/config.yaml)
-├── auth.py            # OAuth 2.0 Desktop flow + service account support + token refresh handling
+├── auth.py            # OAuth 2.0 flow (bundled + custom credentials, headless fallback) + service accounts
 ├── cli.py             # Interactive 'adloop init' setup wizard
 ├── crossref.py        # Cross-reference tools (GA4 + Ads combined analysis)
 ├── tracking.py        # Tracking validation + code generation tools
@@ -368,6 +349,8 @@ What's been shipped and what's next:
 - ~~Setup wizard (`adloop init`)~~ ✓
 - ~~Claude Code support~~ ✓ — `CLAUDE.md`, `.mcp.json`, `.claude/rules/`, `.claude/commands/`, CLI wizard snippets
 - ~~PyPI package~~ ✓ — `pip install adloop`
+- ~~Bundled OAuth credentials~~ ✓ — no Google Cloud project required, auto-discovery of GA4/Ads accounts
+- ~~Headless server support~~ ✓ — manual URL copy-paste flow for servers without a browser
 - **Community launch** — HN, Indie Hackers, r/cursor, Twitter
 - **Video walkthrough**
 

@@ -40,6 +40,7 @@ guides/
 
 # AdLoop credentials (should be in ~/.adloop/, not in repo)
 credentials.json
+!src/adloop/bundled_credentials.json
 token.json
 *.pem
 
