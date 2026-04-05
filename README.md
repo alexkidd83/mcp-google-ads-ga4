@@ -362,12 +362,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. The short version: open a
 
 MIT — see [LICENSE](LICENSE).
 
+## Privacy
+
+AdLoop runs entirely on your machine. No data is collected, stored, or transmitted to any server. See [PRIVACY.md](PRIVACY.md) for the full privacy policy.
+
 ---
 
 <div align="center">
 
 **If AdLoop saves you from switching between Google Ads, GA4, and your code editor — [give it a star](https://github.com/kLOsk/adloop).**
 
-Made by [@kLOsk](https://github.com/kLOsk)
+Made by [@kLOsk](https://github.com/kLOsk) | [Privacy Policy](PRIVACY.md)
 
 </div>
