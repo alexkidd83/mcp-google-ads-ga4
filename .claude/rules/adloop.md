@@ -94,7 +94,8 @@ These tools call both APIs internally and return unified results with computed `
 | `draft_image_assets` | Create image assets for a campaign from local files (does NOT publish) | `campaign_id`, `image_paths` list of local PNG/JPEG/GIF files |
 | `draft_sitelinks` | Create sitelink extensions for a campaign (does NOT publish) | `campaign_id`, `sitelinks` list of {link_text ≤25 chars, final_url, description1 ≤35 chars, description2 ≤35 chars} |
 | `draft_keywords` | Propose keyword additions (does NOT add) | Each keyword needs `text` and `match_type` (EXACT/PHRASE/BROAD) |
-| `add_negative_keywords` | Propose negative keywords (does NOT add) | `campaign_id`, keyword list, `match_type` |
+| `add_negative_keywords` | Propose negative keywords directly on a campaign (does NOT add) | `campaign_id`, keyword list, `match_type` |
+| `propose_negative_keyword_list` | Draft a shared negative keyword list and attach it to a campaign (does NOT create) | `campaign_id`, `list_name`, keyword list, `match_type` |
 | `pause_entity` | Propose pausing campaign/ad group/ad/keyword | `entity_type`, `entity_id` |
 | `enable_entity` | Propose enabling paused entity | `entity_type`, `entity_id` |
 | `remove_entity` | Propose REMOVING an entity (irreversible) | `entity_type` (incl. "negative_keyword", "campaign_asset", "asset", "customer_asset"), `entity_id` |
@@ -280,7 +281,9 @@ Most websites (especially in the EU) use a GDPR cookie consent banner. This has 
 2. Call `get_negative_keywords` to see what's already blocked — avoid duplicates
 3. Identify irrelevant terms that waste budget — group them by theme
 4. Call `get_campaign_performance` to get the right `campaign.id`
-5. Call `add_negative_keywords` with the proposed list and the campaign ID
+5. Choose the right write tool:
+   - **Direct campaign negatives** (`add_negative_keywords`): faster, campaign-specific, no reuse across campaigns
+   - **Shared negative keyword list** (`propose_negative_keyword_list`): creates a named, reusable list that can be attached to multiple campaigns — prefer this when the user wants to reuse the list or when they explicitly mention "list"
 6. Present preview and wait for confirmation
 
 ### When user asks to pause or enable something

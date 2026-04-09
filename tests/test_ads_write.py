@@ -601,6 +601,88 @@ def test_remove_entity_normalizes_commas_to_tildes(config):
     assert result["entity_id"] == "1001~99~SITELINK"
 
 
+class TestProposeNegativeKeywordList:
+    def test_returns_preview_with_correct_operation(self, config):
+        result = write.propose_negative_keyword_list(
+            config,
+            customer_id="123-456-7890",
+            campaign_id="1001",
+            list_name="Irrelevant Terms",
+            keywords=["free", "cheap diy"],
+            match_type="EXACT",
+        )
+        assert result["operation"] == "create_negative_keyword_list"
+        assert result["entity_type"] == "negative_keyword_list"
+        assert result["entity_id"] == "1001"
+        assert result["changes"]["list_name"] == "Irrelevant Terms"
+        assert result["changes"]["keywords"] == ["free", "cheap diy"]
+        assert result["changes"]["match_type"] == "EXACT"
+        assert result["status"] == "PENDING_CONFIRMATION"
+        assert "plan_id" in result
+
+    def test_normalises_match_type_to_uppercase(self, config):
+        result = write.propose_negative_keyword_list(
+            config,
+            customer_id="123-456-7890",
+            campaign_id="1001",
+            list_name="My List",
+            keywords=["discount"],
+            match_type="phrase",
+        )
+        assert result["changes"]["match_type"] == "PHRASE"
+
+    def test_requires_campaign_id(self, config):
+        result = write.propose_negative_keyword_list(
+            config,
+            list_name="My List",
+            keywords=["free"],
+        )
+        assert result["error"] == "Validation failed"
+        assert any("campaign_id" in d for d in result["details"])
+
+    def test_requires_list_name(self, config):
+        result = write.propose_negative_keyword_list(
+            config,
+            campaign_id="1001",
+            keywords=["free"],
+        )
+        assert result["error"] == "Validation failed"
+        assert any("list_name" in d for d in result["details"])
+
+    def test_requires_at_least_one_keyword(self, config):
+        result = write.propose_negative_keyword_list(
+            config,
+            campaign_id="1001",
+            list_name="My List",
+            keywords=[],
+        )
+        assert result["error"] == "Validation failed"
+        assert any("keyword" in d for d in result["details"])
+
+    def test_rejects_invalid_match_type(self, config):
+        result = write.propose_negative_keyword_list(
+            config,
+            campaign_id="1001",
+            list_name="My List",
+            keywords=["free"],
+            match_type="INVALID",
+        )
+        assert result["error"] == "Validation failed"
+        assert any("match_type" in d for d in result["details"])
+
+    def test_plan_is_stored_and_retrievable(self, config):
+        result = write.propose_negative_keyword_list(
+            config,
+            customer_id="123-456-7890",
+            campaign_id="1001",
+            list_name="Budget Wasters",
+            keywords=["free trial"],
+        )
+        plan_id = result["plan_id"]
+        from adloop.safety import preview as preview_store
+        assert plan_id in preview_store._pending_plans
+
+
 def test_extract_error_message_handles_plain_exceptions():
     assert write._extract_error_message(ValueError("something broke")) == "something broke"
 

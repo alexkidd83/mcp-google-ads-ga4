@@ -898,6 +898,34 @@ def add_negative_keywords(
 
 @mcp.tool(annotations=_WRITE)
 @_safe
+def propose_negative_keyword_list(
+    campaign_id: str,
+    list_name: str,
+    keywords: list[str],
+    customer_id: str = "",
+    match_type: str = "EXACT",
+) -> dict:
+    """Draft a shared negative keyword list and attach it to a campaign — returns a PREVIEW.
+
+    Creates a reusable negative keyword list that can later be applied to multiple
+    campaigns, unlike add_negative_keywords which adds directly to one campaign.
+    match_type: "EXACT", "PHRASE", or "BROAD"
+    Call confirm_and_apply with the returned plan_id to execute.
+    """
+    from adloop.ads.write import propose_negative_keyword_list as _impl
+
+    return _impl(
+        _config,
+        customer_id=customer_id or _config.ads.customer_id,
+        campaign_id=campaign_id,
+        list_name=list_name,
+        keywords=keywords,
+        match_type=match_type,
+    )
+
+
+@mcp.tool(annotations=_WRITE)
+@_safe
 def update_ad_group(
     ad_group_id: str,
     customer_id: str = "",
