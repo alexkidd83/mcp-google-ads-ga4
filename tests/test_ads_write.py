@@ -780,7 +780,11 @@ class TestApplyCreateNegativeKeywordList:
             ),
         )
 
-        if fail_on_step == "add_keywords":
+        if fail_on_step == "create_shared_set":
+            shared_set_service.mutate_shared_sets = lambda **_kw: (_ for _ in ()).throw(
+                ValueError("duplicate name")
+            )
+        elif fail_on_step == "add_keywords":
             shared_criterion_service.mutate_shared_criteria = lambda **_kw: (_ for _ in ()).throw(
                 ValueError("quota exceeded")
             )
@@ -811,6 +815,14 @@ class TestApplyCreateNegativeKeywordList:
         assert result["campaign_shared_set_resource"] == "customers/1234567890/campaignSharedSets/888"
         assert result["keyword_count"] == 2
         assert "partial_failure" not in result
+
+    def test_step1_failure_returns_partial_with_no_resource(self):
+        client = self._make_client(fail_on_step="create_shared_set")
+        result = write._apply_create_negative_keyword_list(client, "1234567890", self._changes())
+        assert result["partial_failure"] is True
+        assert result["failed_step"] == "create_shared_set"
+        assert result["shared_set_resource"] is None
+        assert result["completed_steps"] == []
 
     def test_step2_failure_returns_partial_with_shared_set_resource(self):
         client = self._make_client(fail_on_step="add_keywords")

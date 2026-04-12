@@ -2525,22 +2525,29 @@ def _apply_create_negative_keyword_list(
 ) -> dict:
     """Create a shared negative keyword list and attach it to a campaign.
 
-    Executes three sequential API calls. If step 2 or 3 fails, the result
-    includes partial_failure info with the SharedSet resource name so the
-    caller can clean up or retry the remaining steps.
+    Executes three sequential API calls. If any step fails, the result
+    includes partial_failure info with the SharedSet resource name (if
+    created) so the caller can clean up or retry the remaining steps.
     """
-    shared_set_resource = None
-
     # 1. Create the SharedSet
-    shared_set_service = client.get_service("SharedSetService")
-    ss_op = client.get_type("SharedSetOperation")
-    shared_set = ss_op.create
-    shared_set.name = changes["list_name"]
-    shared_set.type_ = client.enums.SharedSetTypeEnum.NEGATIVE_KEYWORDS
-    ss_response = shared_set_service.mutate_shared_sets(
-        customer_id=cid, operations=[ss_op]
-    )
-    shared_set_resource = ss_response.results[0].resource_name
+    try:
+        shared_set_service = client.get_service("SharedSetService")
+        ss_op = client.get_type("SharedSetOperation")
+        shared_set = ss_op.create
+        shared_set.name = changes["list_name"]
+        shared_set.type_ = client.enums.SharedSetTypeEnum.NEGATIVE_KEYWORDS
+        ss_response = shared_set_service.mutate_shared_sets(
+            customer_id=cid, operations=[ss_op]
+        )
+        shared_set_resource = ss_response.results[0].resource_name
+    except Exception as exc:
+        return {
+            "partial_failure": True,
+            "shared_set_resource": None,
+            "completed_steps": [],
+            "failed_step": "create_shared_set",
+            "error": _extract_error_message(exc),
+        }
 
     # 2. Add keywords to the list
     try:
