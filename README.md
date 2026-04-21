@@ -192,6 +192,11 @@ uv run adloop init
 
 The `adloop init` wizard walks you through everything. AdLoop ships with built-in Google OAuth credentials, so you don't need to create a Google Cloud project.
 
+> **⚠️ Built-in credentials temporarily unavailable — Google verification pending.**
+> Google limits unverified OAuth apps to 100 users. AdLoop has reached that cap while awaiting Google's app verification. Until verification is complete, the built-in credentials will show a **"This app is blocked"** error for new users.
+>
+> **Workaround:** set up your own Google Cloud project using the [Advanced Setup](#advanced-setup-custom-google-cloud-project) instructions below (takes ~5 minutes). Your own project has no user cap and is the recommended setup path in the meantime.
+
 The wizard:
 
 1. **Developer token** — from your Google Ads MCC ([API Center](https://ads.google.com/aw/apicenter))
@@ -366,7 +371,7 @@ What's been shipped and what's next:
 - ~~Setup wizard (`adloop init`)~~ ✓
 - ~~Claude Code support~~ ✓ — `CLAUDE.md`, `.mcp.json`, `.claude/rules/`, `.claude/commands/`, CLI wizard snippets
 - ~~PyPI package~~ ✓ — `pip install adloop`
-- ~~Bundled OAuth credentials~~ ✓ — no Google Cloud project required, auto-discovery of GA4/Ads accounts
+- ~~Bundled OAuth credentials~~ ✓ — no Google Cloud project required, auto-discovery of GA4/Ads accounts (currently capped at 100 users pending Google verification — use [Advanced Setup](#advanced-setup-custom-google-cloud-project) in the meantime)
 - ~~Headless server support~~ ✓ — manual URL copy-paste flow for servers without a browser
 - ~~Behavioral eval suites~~ ✓ — 28 prompt-and-expectation tests covering read, write, tracking, and planning workflows
 - **Community launch** — HN, Indie Hackers, r/cursor, Twitter
