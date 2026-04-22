@@ -10,16 +10,25 @@ if TYPE_CHECKING:
     from adloop.config import AdLoopConfig
 
 
-def list_accounts(config: AdLoopConfig) -> dict:
-    """List all accessible Google Ads accounts."""
+def list_accounts(config: AdLoopConfig, *, limit: int = 50) -> dict:
+    """List accessible Google Ads accounts, up to *limit* entries.
+
+    The default of 50 is intentionally conservative: on large agency MCCs
+    (100+ accounts) returning the full list as a single MCP tool response
+    can trip per-response timeouts or size caps on some MCP hosts. Raise
+    *limit* when you explicitly want more, or use the customer_id parameter
+    on individual tools (get_campaign_performance, run_gaql, etc.) to query
+    a specific account directly without enumerating all of them.
+    """
     from adloop.ads.gaql import execute_query
 
     mcc_id = config.ads.login_customer_id
     if mcc_id:
-        query = """
+        query = f"""
             SELECT customer_client.id, customer_client.descriptive_name,
                    customer_client.status, customer_client.manager
             FROM customer_client
+            LIMIT {int(limit) + 1}
         """
         rows = execute_query(config, mcc_id, query)
     else:
@@ -31,7 +40,19 @@ def list_accounts(config: AdLoopConfig) -> dict:
         """
         rows = execute_query(config, config.ads.customer_id, query)
 
-    return {"accounts": rows, "total_accounts": len(rows)}
+    truncated = len(rows) > limit
+    if truncated:
+        rows = rows[:limit]
+
+    result: dict = {"accounts": rows, "total_accounts": len(rows)}
+    if truncated:
+        result["truncated"] = True
+        result["note"] = (
+            f"Returned the first {limit} accounts. Call list_accounts with a higher "
+            f"limit to see more, or pass customer_id directly to other tools to "
+            f"query a specific account without enumerating all of them."
+        )
+    return result
 
 
 def get_campaign_performance(

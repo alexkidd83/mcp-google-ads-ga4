@@ -147,11 +147,21 @@ def health_check() -> dict:
             status["ga4_error_details"] = parsed["details"]
 
     try:
-        from adloop.ads.read import list_accounts as _ads_test
+        from adloop.ads.gaql import execute_query
 
-        result = _ads_test(_config)
+        # Minimal probe — one row is enough to confirm OAuth, developer token,
+        # and API reachability. We deliberately avoid enumerating customer_client
+        # here: on large MCCs (100+ accounts) that call can take multiple seconds
+        # and its size/latency is the likely culprit when the MCP host kills the
+        # connection shortly after health_check. Call list_accounts explicitly
+        # if a count or listing is actually needed.
+        mcc_id = _config.ads.login_customer_id or _config.ads.customer_id
+        execute_query(
+            _config,
+            mcc_id,
+            "SELECT customer.id, customer.descriptive_name FROM customer LIMIT 1",
+        )
         status["ads"] = "ok"
-        status["ads_accounts"] = result.get("total_accounts", 0)
     except Exception as e:
         parsed = _structured_error("health_check", e)
         status["ads"] = "error"
@@ -273,15 +283,17 @@ def get_tracking_events(
 
 @mcp.tool(annotations=_READONLY)
 @_safe
-def list_accounts() -> dict:
-    """List all accessible Google Ads accounts.
+def list_accounts(limit: int = 50) -> dict:
+    """List accessible Google Ads accounts.
 
-    Returns account names, IDs, and status. Use this to discover
-    which accounts are available before running performance queries.
+    Returns account names, IDs, and status. The default cap of 50 keeps the
+    response small on large agency MCCs — raise *limit* if you actually need
+    more. For most workflows you don't need to list accounts at all: pass
+    customer_id directly to get_campaign_performance, run_gaql, etc.
     """
     from adloop.ads.read import list_accounts as _impl
 
-    return _impl(_config)
+    return _impl(_config, limit=limit)
 
 
 @mcp.tool(annotations=_READONLY)
